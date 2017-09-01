@@ -1,0 +1,150 @@
+WITH  custom_tags AS (
+      SELECT asset_id, CSV(DISTINCT tag_name ORDER BY tag_name) AS custom_tags
+      FROM dim_tag
+         JOIN dim_tag_asset USING (tag_id)
+      WHERE tag_type = 'CUSTOM'
+      GROUP BY asset_id
+   ),
+   location_tags AS (
+      SELECT asset_id, CSV(DISTINCT tag_name ORDER BY tag_name) AS location_tags
+      FROM dim_tag
+         JOIN dim_tag_asset USING (tag_id)
+      WHERE tag_type = 'LOCATION'
+      GROUP BY asset_id
+   ),
+   owner_tags AS (
+      SELECT asset_id, CSV(DISTINCT tag_name ORDER BY tag_name) AS owner_tags
+      FROM dim_tag
+         JOIN dim_tag_asset USING (tag_id)
+      WHERE tag_type = 'OWNER'
+      GROUP BY asset_id
+   ),
+   criticality_tags AS (
+      SELECT asset_id, CSV(DISTINCT tag_name ORDER BY tag_name) AS criticality_tags
+      FROM dim_tag
+         JOIN dim_tag_asset USING (tag_id)
+      WHERE tag_type = 'CRITICALITY'
+      GROUP BY asset_id
+   ),
+   sol AS (SELECT asset_id, vulnerability_id, CSV(DISTINCT htmltotext (fix)) AS ss
+	FROM dim_asset_vulnerability_solution davs
+	JOIN dim_solution ds using (solution_id)
+	GROUP BY asset_id, vulnerability_id
+   ),
+   proofs AS (SELECT DISTINCT asset_id, vulnerability_id, csv(DISTINCT 'Port ' || port || ': ' || proofAsText(proof) ||'.     ') as "proofs"
+		FROM fact_asset_vulnerability_instance
+		GROUP BY asset_id, vulnerability_id
+   )
+
+SELECT DISTINCT
+	dv.title AS "Solution",
+	favi.vulnerability_id AS "ultimate_soln_id",
+	da.asset_id,
+	sol.ss as "Fix",
+	dv.riskscore,
+	dv.exploits as "ExploitCount",
+dv.malware_kits AS "MalwareCount", 
+host_name AS "Asset Hostname", 
+ip_address AS "Asset IP", 
+ot.owner_tags,
+lt.location_tags,
+criticality_tags,
+custom_tags.custom_tags,
+dos.name AS "OS Name", 
+'https://[server:port]/vulnerability/vuln-summary.jsp?vulnid=' || vulnerability_id || '&devid=' || asset_id AS "Asset URL", 
+htmltotext(dv.description) AS "vulnerability list", 
+csv(DISTINCT dvr.reference) AS "CVEs",
+length(sol.ss) as fixlength,
+'V-' || favi.vulnerability_id || '-' || favi.asset_id as "fixasset_id",
+proofs.proofs AS "Evidence"
+   
+   
+FROM fact_asset_vulnerability_instance favi
+	JOIN proofs USING (asset_id, vulnerability_id)
+   JOIN dim_asset da USING (asset_id)
+   JOIN dim_operating_system dos USING (operating_system_id)
+   JOIN dim_vulnerability dv USING (vulnerability_id)
+   LEFT OUTER JOIN dim_vulnerability_reference dvr USING (vulnerability_id)
+   LEFT OUTER JOIN sol USING (asset_id, vulnerability_id)
+   LEFT OUTER JOIN location_tags lt USING (asset_id)
+   LEFT OUTER JOIN owner_tags ot USING (asset_id)
+   LEFT OUTER JOIN criticality_tags ct USING (asset_id)
+   LEFT OUTER JOIN custom_tags USING (asset_id)
+WHERE
+[ADD EXCLUSIONS and other criteria HERE]
+dv.riskscore>=200
+AND
+dv.title not like '%Foo%'
+AND dv.summary not like '%bar%'
+
+GROUP BY title, favi.vulnerability_id, dv.riskscore, host_name, ip_address, asset_id,  da.asset_id, sol.ss, 
+ot.owner_tags, 
+dos.name,
+lt.location_tags,
+criticality_tags,
+custom_tags.custom_tags, 
+dv.exploits,
+dv.riskscore,
+dv.malware_kits,
+dv.description,
+proofs.proofs
+
+UNION
+
+
+SELECT DISTINCT ds.summary AS "Solution", 
+solution_id as "ultimate_soln_id", 
+asset_id, 
+htmltotext(fix), 
+MAX(dv.riskscore) AS "RiskScore", 
+sum(dv.exploits) As "ExploitCount", 
+sum(dv.malware_kits) As "MalwareCount", 
+host_name AS "Asset Hostname", 
+ip_address AS "Asset IP", 
+ot.owner_tags,
+lt.location_tags,
+criticality_tags,
+custom_tags.custom_tags,
+dos.name AS "OS Name",
+'https://[server:port]/asset.jsp?devid=' || asset_id AS "Asset URL", 
+csv(DISTINCT dv.title) AS "Vulnerability List", 
+csv(DISTINCT dvr.reference) AS "CVEs", 
+length (csv(DISTINCT dv.title)) as "fixlength",
+'S-' || solution_id || '-' || asset_id AS "fixasset_id",
+' ' as "Evidence"
+
+FROM dim_asset_vulnerability_best_solution dvs 
+JOIN dim_solution ds USING (solution_id)
+JOIN dim_vulnerability dv USING (vulnerability_id)
+JOIN dim_vulnerability_reference dvr USING (vulnerability_id)
+JOIN dim_asset USING (asset_id)
+JOIN dim_operating_system dos USING (operating_system_id)
+JOIN dim_tag_asset dta USING (asset_id)
+LEFT OUTER JOIN location_tags lt USING (asset_id)
+LEFT OUTER JOIN owner_tags ot USING (asset_id)
+LEFT OUTER JOIN criticality_tags ct USING (asset_id)
+LEFT OUTER JOIN custom_tags USING (asset_id)
+
+WHERE 
+[ADD EXCLUSIONS, inclusions and other criteria HERE]
+
+dv.riskscore>=200
+
+AND (summary LIKE '%Foo%' 
+OR summary LIKE '%bar%')
+
+AND dv.title not like '%FooBar%'
+
+GROUP BY summary, 
+asset_id, 
+solution_id, 
+host_name, 
+ip_address, 
+asset_id, 
+ot.owner_tags, 
+dos.name,
+lt.location_tags,
+criticality_tags,
+custom_tags.custom_tags,
+"Evidence",
+fix
